@@ -55,10 +55,10 @@ bot.command("list", async (ctx) => {
         const id = r.get("任务ID");
         const date = r.get("日期") || "未定日期";
         const time = r.get("时间") ? ` ${r.get("时间")}` : "";
-        const content = escapeHtml(r.get("内容"));
+        const title = escapeHtml(r.get("标题") || r.get("内容"));
         const urgent = r.get("紧急标记") === "是" ? " 🔴" : "";
         const typeIcon = r.get("类型") === "硬deadline" ? "🔒" : "💭";
-        message += `${idx + 1}. ${content}${urgent}\n<i>${typeIcon} ${date}${time} · ${id}</i>\n\n`;
+        message += `${idx + 1}. <b>${title}</b>${urgent}\n<i>${typeIcon} ${date}${time} · ${id}</i>\n\n`;
       });
     }
 
@@ -158,11 +158,11 @@ bot.on("text", async (ctx) => {
 
       if (matches.length === 1) {
         await markTaskDoneByRow(matches[0]);
-        const content = matches[0].get("内容");
-        await ctx.reply(`✅ 太好了，${escapeHtml(content)} 已标记完成`, { parse_mode: "HTML" });
+        const title = matches[0].get("标题") || matches[0].get("内容");
+        await ctx.reply(`✅ 太好了，${escapeHtml(title)} 已标记完成`, { parse_mode: "HTML" });
       } else if (matches.length > 1) {
         const lines = matches
-          .map((r) => `<code>${r.get("任务ID")}</code> — ${escapeHtml(r.get("内容"))}`)
+          .map((r) => `<code>${r.get("任务ID")}</code> — ${escapeHtml(r.get("标题") || r.get("内容"))}`)
           .join("\n");
         await ctx.reply(`找到好几个可能符合的任务，麻烦告诉我是哪个（用 /done 任务ID）：\n${lines}`, {
           parse_mode: "HTML",
@@ -200,7 +200,8 @@ bot.on("text", async (ctx) => {
       const id = await addTask({
         date: task.date,
         time: task.time,
-        content: task.content,
+        title: task.title,
+        detail: task.detail,
         project: task.project,
         urgent: task.urgent,
         hard_deadline: task.hard_deadline,
@@ -213,7 +214,7 @@ bot.on("text", async (ctx) => {
       const urgentLabel = task.urgent ? " 🔴急" : "";
       const typeIcon = task.hard_deadline ? "🔒" : "💭";
       confirmLines.push(
-        `✅ <code>${id}</code> ${typeIcon} ${dateLabel}${timeLabel}${urgentLabel}\n    ${projectLabel}${escapeHtml(task.content)}`
+        `✅ <code>${id}</code> ${typeIcon} ${dateLabel}${timeLabel}${urgentLabel}\n<b>${projectLabel}${escapeHtml(task.title)}</b>\n<i>${escapeHtml(task.detail)}</i>`
       );
     }
 

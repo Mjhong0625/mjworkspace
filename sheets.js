@@ -28,10 +28,18 @@ async function getSheet(title, headers) {
 
 // --- Tasks ---
 async function getTasksSheet() {
-  return getSheet("Tasks", [
+  const sheet = await getSheet("Tasks", [
     "任务ID", "日期", "时间", "内容", "关联客户项目", "紧急标记",
     "类型", "状态", "已提醒次数", "原始消息", "创建时间", "完成时间",
   ]);
+
+  // 自动补栏位：如果表格是旧版本，没有"标题"栏，补加在最后，不影响既有资料
+  await sheet.loadHeaderRow();
+  if (!sheet.headerValues.includes("标题")) {
+    await sheet.setHeaderRow([...sheet.headerValues, "标题"]);
+  }
+
+  return sheet;
 }
 
 async function nextTaskId() {
@@ -55,7 +63,8 @@ async function addTask(task) {
     任务ID: id,
     日期: task.date || "",
     时间: task.time || "",
-    内容: task.content || "",
+    标题: task.title || task.content || "",
+    内容: task.detail || task.content || "",
     关联客户项目: task.project || "",
     紧急标记: task.urgent ? "是" : "否",
     类型: task.hard_deadline ? "硬deadline" : "软提醒",
@@ -130,7 +139,7 @@ async function findPendingTasksByKeyword(keyword) {
 
   return rows.filter((r) => {
     if ((r.get("状态") || "") !== "待处理") return false;
-    const haystack = `${r.get("内容") || ""} ${r.get("关联客户项目") || ""} ${r.get("原始消息") || ""}`.toLowerCase();
+    const haystack = `${r.get("标题") || ""} ${r.get("内容") || ""} ${r.get("关联客户项目") || ""} ${r.get("原始消息") || ""}`.toLowerCase();
     // 关键词按空格拆分，全部命中才算匹配
     return kw.split(/\s+/).every((part) => part && haystack.includes(part));
   });
