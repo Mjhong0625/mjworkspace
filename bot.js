@@ -133,7 +133,11 @@ bot.command("cancel", async (ctx) => {
   }
 });
 
-// --- 核心：接收文字消息 → 解析 → 写入 ---
+// 自然口语化的确认开场，随机挑一个，避免每次都一样死板
+const CONFIRM_OPENERS = ["好，这个记下了", "收到，帮你记好了", "OK，已经记下来", "好，记好了", "了解，记下了"];
+function randomOpener() {
+  return CONFIRM_OPENERS[Math.floor(Math.random() * CONFIRM_OPENERS.length)];
+}
 bot.on("text", async (ctx) => {
   const userMessage = ctx.message.text.trim();
   if (userMessage.startsWith("/")) return; // 指令已被上面的handler处理，这里不重复处理
@@ -141,6 +145,11 @@ bot.on("text", async (ctx) => {
   try {
     const entities = await loadEntities();
     const result = await parseMessage(userMessage, entities);
+
+    // 情绪回应：如果Haiku侦测到疲惫/压力语气，先回应一句体贴的话
+    if (result.empathy_note) {
+      await ctx.reply(result.empathy_note);
+    }
 
     // 无论是否为任务，都先处理消息里学到的新实体
     const learnedLines = [];
@@ -159,7 +168,7 @@ bot.on("text", async (ctx) => {
       return; // 不是任务，不回应任务内容，避免打扰
     }
 
-    const confirmLines = [...learnedLines];
+    const confirmLines = [randomOpener(), ...learnedLines];
 
     const escapeHtml = (s) =>
       String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
