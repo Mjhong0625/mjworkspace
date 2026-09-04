@@ -1,6 +1,6 @@
 require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
-const { parseMessage } = require("./claude");
+const { parseMessage, parseImageMessage } = require("./claude");
 const {
   addTask,
   loadEntities,
@@ -34,7 +34,7 @@ function randomOpener() {
 }
 
 const HELP_TEXT =
-  "秘书在line上 📋\n直接跟我说要做什么事，我会记下来；说「做完了/搞定了」我也听得懂，会自动帮你打勾。\n\n下面按钮可以快速操作，也可以照旧打指令：\n/list 查看待处理任务\n/done 任务ID 标记完成\n/cancel 任务ID 取消任务";
+  "秘书在line上 📋\n直接跟我说要做什么事，我会记下来；说「做完了/搞定了」我也听得懂，会自动帮你打勾。截图/照片也可以直接传给我，我会看内容判断有没有任务。\n\n下面按钮可以快速操作，也可以照旧打指令：\n/list 查看待处理任务\n/done 任务ID 标记完成\n/cancel 任务ID 取消任务";
 
 // --- /list 与 今日任务 共用的清单渲染 ---
 async function renderTaskList(ctx, { todayOnly = false } = {}) {
@@ -87,6 +87,92 @@ async function renderTaskList(ctx, { todayOnly = false } = {}) {
   } catch (err) {
     console.error("清单读取失败:", err);
     await ctx.reply("⚠️ 读取任务列表失败。");
+  }
+}
+
+// --- 完成侦测共用逻辑（文字/按钮/图片都会用到） ---
+async function tryMarkDoneByHint(ctx, hint, logTag) {
+  const matches = await findPendingTasksByKeyword(hint);
+  console.log(`[${logTag}] hint="${hint}" 匹配到${matches.length}项`);
+
+  if (matches.length === 1) {
+    await markTaskDoneByRow(matches[0]);
+    const title = matches[0].get("标题") || matches[0].get("内容");
+    await ctx.reply(`✓ 太好了，${escapeHtml(title)} 已标记完成`, { parse_mode: "HTML" });
+  } else if (matches.length > 1) {
+    const lines = matches
+      .map((r) => `<code>${r.get("任务ID")}</code> — ${escapeHtml(r.get("标题") || r.get("内容"))}`)
+      .join("\n");
+    await ctx.reply(`找到好几个可能符合的，麻烦告诉我是哪个（/done 任务ID）：\n${lines}`, {
+      parse_mode: "HTML",
+    });
+  } else {
+    await ctx.reply("没找到对应的待办，如果这件事之前没记录过，就不用管这句了 👌");
+  }
+}
+
+// --- 处理Haiku解析结果的共用逻辑（文字消息、图片消息都走这里） ---
+async function handleParsedResult(ctx, result, rawMessageForStorage) {
+  if (result.empathy_note) {
+    await ctx.reply(result.empathy_note);
+  }
+
+  if (result.done_hint) {
+    await tryMarkDoneByHint(ctx, result.done_hint, "完成侦测");
+  }
+
+  if (result.reply) {
+    await ctx.reply(result.reply);
+  }
+
+  const learnedLines = [];
+  if (result.new_entities && result.new_entities.length > 0) {
+    for (const ent of result.new_entities) {
+      if (!ent.name || !ent.project) continue;
+      const added = await addEntity(ent.name, ent.project);
+      if (added) learnedLines.push(`📌 学起来了：${ent.name} → ${ent.project}`);
+    }
+  }
+
+  if (!result.is_task || !result.tasks || result.tasks.length === 0) {
+    if (learnedLines.length > 0) {
+      await ctx.reply(learnedLines.join("\n"));
+    }
+    return;
+  }
+
+  const confirmLines = [];
+
+  for (const task of result.tasks) {
+    if (task.need_clarification) {
+      await ctx.reply(`❓ ${task.need_clarification}`);
+      continue;
+    }
+
+    const id = await addTask({
+      date: task.date,
+      time: task.time,
+      title: task.title,
+      detail: task.detail,
+      project: task.project,
+      urgent: task.urgent,
+      hard_deadline: task.hard_deadline,
+      raw_message: rawMessageForStorage,
+    });
+
+    const dateLabel = task.date ? task.date : "未定日期";
+    const timeLabel = task.time ? ` ${task.time}` : "";
+    const projectLabel = task.project ? `[${escapeHtml(task.project)}] ` : "";
+    const urgentLabel = task.urgent ? " 🔴急" : "";
+    confirmLines.push(
+      `<code>${id}</code> ${dateLabel}${timeLabel}${urgentLabel}\n<b>${projectLabel}${escapeHtml(task.title)}</b>\n<i>${escapeHtml(task.detail)}</i>`
+    );
+  }
+
+  if (confirmLines.length > 0) {
+    await ctx.reply([randomOpener(), ...learnedLines, ...confirmLines].join("\n"), { parse_mode: "HTML" });
+  } else if (learnedLines.length > 0) {
+    await ctx.reply(learnedLines.join("\n"));
   }
 }
 
@@ -174,30 +260,12 @@ bot.hears(BTN_DONE, async (ctx) => {
 bot.on("text", async (ctx) => {
   const userMessage = ctx.message.text.trim();
   if (userMessage.startsWith("/")) return;
-  // 按钮文字已被上面的 bot.hears 处理，这里不重复处理
   if ([BTN_LIST, BTN_DONE, BTN_TODAY, BTN_HELP].includes(userMessage)) return;
 
-  // 如果正在等待"完成哪一件"的回复，这条消息直接拿去比对，不走一般任务解析
   if (awaitingDoneTarget) {
     awaitingDoneTarget = false;
     try {
-      const matches = await findPendingTasksByKeyword(userMessage);
-      console.log(`[完成侦测-按钮] 输入="${userMessage}" 匹配到${matches.length}项`);
-
-      if (matches.length === 1) {
-        await markTaskDoneByRow(matches[0]);
-        const title = matches[0].get("标题") || matches[0].get("内容");
-        await ctx.reply(`✓ 太好了，${escapeHtml(title)} 已标记完成`, { parse_mode: "HTML" });
-      } else if (matches.length > 1) {
-        const lines = matches
-          .map((r) => `<code>${r.get("任务ID")}</code> — ${escapeHtml(r.get("标题") || r.get("内容"))}`)
-          .join("\n");
-        await ctx.reply(`找到好几个可能符合的，麻烦告诉我是哪个（/done 任务ID）：\n${lines}`, {
-          parse_mode: "HTML",
-        });
-      } else {
-        await ctx.reply("没找到对应的待办，如果这件事之前没记录过，就不用管这句了 👌");
-      }
+      await tryMarkDoneByHint(ctx, userMessage, "完成侦测-按钮");
     } catch (err) {
       console.error("按钮完成流程失败:", err);
       await ctx.reply("⚠️ 处理的时候出了点问题，再试一次？");
@@ -208,87 +276,33 @@ bot.on("text", async (ctx) => {
   try {
     const entities = await loadEntities();
     const result = await parseMessage(userMessage, entities);
-
-    if (result.empathy_note) {
-      await ctx.reply(result.empathy_note);
-    }
-
-    if (result.done_hint) {
-      const matches = await findPendingTasksByKeyword(result.done_hint);
-      console.log(`[完成侦测] done_hint="${result.done_hint}" 匹配到${matches.length}项`);
-
-      if (matches.length === 1) {
-        await markTaskDoneByRow(matches[0]);
-        const title = matches[0].get("标题") || matches[0].get("内容");
-        await ctx.reply(`✓ 太好了，${escapeHtml(title)} 已标记完成`, { parse_mode: "HTML" });
-      } else if (matches.length > 1) {
-        const lines = matches
-          .map((r) => `<code>${r.get("任务ID")}</code> — ${escapeHtml(r.get("标题") || r.get("内容"))}`)
-          .join("\n");
-        await ctx.reply(`找到好几个可能符合的，麻烦告诉我是哪个（/done 任务ID）：\n${lines}`, {
-          parse_mode: "HTML",
-        });
-      } else {
-        await ctx.reply("没找到对应的待办，如果这件事之前没记录过，就不用管这句了 👌");
-      }
-    }
-
-    if (result.reply) {
-      await ctx.reply(result.reply);
-    }
-
-    const learnedLines = [];
-    if (result.new_entities && result.new_entities.length > 0) {
-      for (const ent of result.new_entities) {
-        if (!ent.name || !ent.project) continue;
-        const added = await addEntity(ent.name, ent.project);
-        if (added) learnedLines.push(`📌 学起来了：${ent.name} → ${ent.project}`);
-      }
-    }
-
-    if (!result.is_task || !result.tasks || result.tasks.length === 0) {
-      if (learnedLines.length > 0) {
-        await ctx.reply(learnedLines.join("\n"));
-      }
-      return;
-    }
-
-    const confirmLines = [];
-
-    for (const task of result.tasks) {
-      if (task.need_clarification) {
-        await ctx.reply(`❓ ${task.need_clarification}`);
-        continue;
-      }
-
-      const id = await addTask({
-        date: task.date,
-        time: task.time,
-        title: task.title,
-        detail: task.detail,
-        project: task.project,
-        urgent: task.urgent,
-        hard_deadline: task.hard_deadline,
-        raw_message: userMessage,
-      });
-
-      const dateLabel = task.date ? task.date : "未定日期";
-      const timeLabel = task.time ? ` ${task.time}` : "";
-      const projectLabel = task.project ? `[${escapeHtml(task.project)}] ` : "";
-      const urgentLabel = task.urgent ? " 🔴急" : "";
-      confirmLines.push(
-        `<code>${id}</code> ${dateLabel}${timeLabel}${urgentLabel}\n<b>${projectLabel}${escapeHtml(task.title)}</b>\n<i>${escapeHtml(task.detail)}</i>`
-      );
-    }
-
-    if (confirmLines.length > 0) {
-      await ctx.reply([randomOpener(), ...learnedLines, ...confirmLines].join("\n"), { parse_mode: "HTML" });
-    } else if (learnedLines.length > 0) {
-      await ctx.reply(learnedLines.join("\n"));
-    }
+    await handleParsedResult(ctx, result, userMessage);
   } catch (err) {
     console.error("处理消息失败:", err);
     await ctx.reply("⚠️ 记录的时候出了点问题，稍后再试一次，或者检查一下log。");
+  }
+});
+
+// --- 图片消息：下载→转base64→丢给Claude读图 ---
+bot.on("photo", async (ctx) => {
+  try {
+    const photos = ctx.message.photo;
+    const largest = photos[photos.length - 1]; // Telegram会给多个尺寸，取最大的
+    const fileLink = await ctx.telegram.getFileLink(largest.file_id);
+
+    const res = await fetch(fileLink.href);
+    const arrayBuffer = await res.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
+
+    const caption = (ctx.message.caption || "").trim();
+    const entities = await loadEntities();
+    const result = await parseImageMessage(base64, "image/jpeg", caption, entities);
+
+    const rawMessageForStorage = caption ? `[图片] ${caption}` : "[图片消息]";
+    await handleParsedResult(ctx, result, rawMessageForStorage);
+  } catch (err) {
+    console.error("图片处理失败:", err);
+    await ctx.reply("⚠️ 图片处理失败，稍后再试一次。");
   }
 });
 

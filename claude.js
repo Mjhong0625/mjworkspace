@@ -83,6 +83,18 @@ ${entityList || "（暂无已知实体）"}
 }`;
 }
 
+function cleanAndParseJson(rawText) {
+  let text = rawText.trim();
+  text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    console.error("JSON解析失败，原始输出：", text);
+    return { is_task: false, tasks: [] };
+  }
+}
+
 async function parseMessage(userMessage, entities) {
   const today = new Date().toISOString().split("T")[0];
   const systemPrompt = buildSystemPrompt(today, entities);
@@ -94,15 +106,34 @@ async function parseMessage(userMessage, entities) {
     messages: [{ role: "user", content: userMessage }],
   });
 
-  let text = response.content[0].text.trim();
-  text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-
-  try {
-    return JSON.parse(text);
-  } catch (err) {
-    console.error("JSON解析失败，原始输出：", text);
-    return { is_task: false, tasks: [] };
-  }
+  return cleanAndParseJson(response.content[0].text);
 }
 
-module.exports = { parseMessage };
+// 图片解析：caption是随图附上的文字说明（可能为空）
+async function parseImageMessage(imageBase64, mediaType, caption, entities) {
+  const today = new Date().toISOString().split("T")[0];
+  const systemPrompt = buildSystemPrompt(today, entities);
+
+  const instruction = caption
+    ? `这张图片附带了说明文字："${caption}"。请结合图片内容和这段说明，判断有没有待办任务。`
+    : "请看这张图片（可能是聊天截图、文件、笔记等），判断里面有没有需要记录的待办任务。如果图片内容跟工作无关（比如纯粹的表情包、风景照），直接返回is_task: false，不用勉强找任务。";
+
+  const response = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1000,
+    system: systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: mediaType, data: imageBase64 } },
+          { type: "text", text: instruction },
+        ],
+      },
+    ],
+  });
+
+  return cleanAndParseJson(response.content[0].text);
+}
+
+module.exports = { parseMessage, parseImageMessage };
