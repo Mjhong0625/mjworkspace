@@ -25,6 +25,7 @@ ${entityList || "（暂无已知实体）"}
 8. content 字段用一句简短的话总结任务内容，不要照抄原文全部。
 9. 如果消息里提到了人名（KOL、同事、联系人等），且能明确判断出这个人归属哪个客户/项目，但这个人名不在上面的已知实体库里，请把它加进 new_entities 数组，帮助系统学习（不确定归属就不要加）。就算这条消息本身不是任务（is_task为false），只要提到了新的人名归属关系，也要照样填 new_entities。
 10. 判断MJ的语气中有没有透露疲惫、压力大、烦躁等情绪（比如"忙死了"、"好累"、"烦死了"、"压力好大"这类）。如果有，写一句简短、体贴、不啰嗦的话放进 empathy_note（像朋友/秘书会说的那种自然反应，不要说教、不要长篇大论，一句话就好，例如"辛苦了，这个先给你记下"）；如果没有情绪线索，empathy_note留空字符串。
+11. 判断这条消息是不是在宣告"某件事已经做完/搞定/完成了"（比如"benq loan unit做好了"、"MILOLO的东西弄完了"、"已经交了"）。如果是，把这条消息里能用来匹配任务的关键词（客户名+内容关键字，尽量简短精准）放进 done_hint 字段；如果不是在宣告完成，done_hint留空字符串。这种情况下 is_task 应为 false，因为这不是新增任务。
 
 只输出JSON，不要有任何其他文字、不要用markdown代码块包裹。
 
@@ -45,7 +46,8 @@ ${entityList || "（暂无已知实体）"}
   "new_entities": [
     { "name": "Arisha", "project": "BenQ" }
   ],
-  "empathy_note": ""
+  "empathy_note": "",
+  "done_hint": ""
 }
 
 如果不是任务，但有新实体：
@@ -55,7 +57,8 @@ ${entityList || "（暂无已知实体）"}
   "new_entities": [
     { "name": "Arisha", "project": "BenQ" }
   ],
-  "empathy_note": ""
+  "empathy_note": "",
+  "done_hint": ""
 }
 
 如果都没有：
@@ -63,7 +66,8 @@ ${entityList || "（暂无已知实体）"}
   "is_task": false,
   "tasks": [],
   "new_entities": [],
-  "empathy_note": ""
+  "empathy_note": "",
+  "done_hint": ""
 }`;
 }
 

@@ -122,6 +122,26 @@ async function addEntity(name, project) {
   return true;
 }
 
+async function findPendingTasksByKeyword(keyword) {
+  const sheet = await getTasksSheet();
+  const rows = await sheet.getRows();
+  const kw = keyword.trim().toLowerCase();
+  if (!kw) return [];
+
+  return rows.filter((r) => {
+    if ((r.get("状态") || "") !== "待处理") return false;
+    const haystack = `${r.get("内容") || ""} ${r.get("关联客户项目") || ""} ${r.get("原始消息") || ""}`.toLowerCase();
+    // 关键词按空格拆分，全部命中才算匹配
+    return kw.split(/\s+/).every((part) => part && haystack.includes(part));
+  });
+}
+
+async function markTaskDoneByRow(row) {
+  row.set("状态", "已完成");
+  row.set("完成时间", new Date().toISOString().slice(0, 16).replace("T", " "));
+  await row.save();
+}
+
 module.exports = {
   getDoc,
   getTasksSheet,
@@ -131,4 +151,6 @@ module.exports = {
   addEntity,
   getConfigSheet,
   loadConfig,
+  findPendingTasksByKeyword,
+  markTaskDoneByRow,
 };

@@ -1,7 +1,7 @@
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const { parseMessage } = require("./claude");
-const { addTask, loadEntities, addEntity, getTasksSheet } = require("./sheets");
+const { addTask, loadEntities, addEntity, getTasksSheet, findPendingTasksByKeyword, markTaskDoneByRow } = require("./sheets");
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 const OWNER_ID = String(process.env.OWNER_TELEGRAM_ID || "");
@@ -47,25 +47,22 @@ bot.command("list", async (ctx) => {
       groups[project].push(r);
     }
 
-    const escapeHtml = (s) =>
-      String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
     let message = `📋 <b>待处理任务</b>（共${pending.length}项）\n`;
 
     for (const [project, items] of Object.entries(groups)) {
-      message += `\n<b>▸ ${escapeHtml(project)}</b>\n`;
-      for (const r of items) {
+      message += `\n<b>${escapeHtml(project)}</b>\n`;
+      items.forEach((r, idx) => {
         const id = r.get("任务ID");
         const date = r.get("日期") || "未定日期";
         const time = r.get("时间") ? ` ${r.get("时间")}` : "";
         const content = escapeHtml(r.get("内容"));
         const urgent = r.get("紧急标记") === "是" ? " 🔴" : "";
         const typeIcon = r.get("类型") === "硬deadline" ? "🔒" : "💭";
-        message += `${typeIcon} <code>${id}</code> ${date}${time}${urgent}\n    ${content}\n`;
-      }
+        message += `${idx + 1}. ${content}${urgent}\n<i>${typeIcon} ${date}${time} · ${id}</i>\n\n`;
+      });
     }
 
-    message += `\n<i>用 /done 任务ID 标记完成，/cancel 任务ID 取消</i>`;
+    message += `<i>完成用 /done 任务ID，取消用 /cancel 任务ID</i>`;
 
     await ctx.reply(message.trim(), { parse_mode: "HTML" });
   } catch (err) {
@@ -138,6 +135,10 @@ const CONFIRM_OPENERS = ["好，这个记下了", "收到，帮你记好了", "O
 function randomOpener() {
   return CONFIRM_OPENERS[Math.floor(Math.random() * CONFIRM_OPENERS.length)];
 }
+
+function escapeHtml(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 bot.on("text", async (ctx) => {
   const userMessage = ctx.message.text.trim();
   if (userMessage.startsWith("/")) return; // 指令已被上面的handler处理，这里不重复处理
@@ -149,6 +150,26 @@ bot.on("text", async (ctx) => {
     // 情绪回应：如果Haiku侦测到疲惫/压力语气，先回应一句体贴的话
     if (result.empathy_note) {
       await ctx.reply(result.empathy_note);
+    }
+
+    // 完成侦测：如果这句话是在宣告某任务已完成，尝试匹配并标记
+    if (result.done_hint) {
+      const matches = await findPendingTasksByKeyword(result.done_hint);
+
+      if (matches.length === 1) {
+        await markTaskDoneByRow(matches[0]);
+        const content = matches[0].get("内容");
+        await ctx.reply(`✅ 太好了，${escapeHtml(content)} 已标记完成`, { parse_mode: "HTML" });
+      } else if (matches.length > 1) {
+        const lines = matches
+          .map((r) => `<code>${r.get("任务ID")}</code> — ${escapeHtml(r.get("内容"))}`)
+          .join("\n");
+        await ctx.reply(`找到好几个可能符合的任务，麻烦告诉我是哪个（用 /done 任务ID）：\n${lines}`, {
+          parse_mode: "HTML",
+        });
+      } else {
+        await ctx.reply("没找到对应的待办任务，如果这件事之前没记录过，就不用管这句了 👌");
+      }
     }
 
     // 无论是否为任务，都先处理消息里学到的新实体
@@ -169,9 +190,6 @@ bot.on("text", async (ctx) => {
     }
 
     const confirmLines = [randomOpener(), ...learnedLines];
-
-    const escapeHtml = (s) =>
-      String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
     for (const task of result.tasks) {
       if (task.need_clarification) {
