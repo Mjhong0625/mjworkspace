@@ -20,66 +20,6 @@ bot.start((ctx) => {
   ctx.reply("MJ秘书已上线 📋\n直接跟我说要做什么事，我会帮你记下来。\n\n指令：\n/list 查看待处理任务\n/done [任务ID] 标记完成\n/cancel [任务ID] 取消任务");
 });
 
-// --- 核心：接收文字消息 → 解析 → 写入 ---
-bot.on("text", async (ctx) => {
-  const userMessage = ctx.message.text.trim();
-  if (userMessage.startsWith("/")) return; // 指令交给对应handler
-
-  try {
-    const entities = await loadEntities();
-    const result = await parseMessage(userMessage, entities);
-
-    // 无论是否为任务，都先处理消息里学到的新实体
-    const learnedLines = [];
-    if (result.new_entities && result.new_entities.length > 0) {
-      for (const ent of result.new_entities) {
-        if (!ent.name || !ent.project) continue;
-        const added = await addEntity(ent.name, ent.project);
-        if (added) learnedLines.push(`🧠 已学习：${ent.name} → ${ent.project}`);
-      }
-    }
-
-    if (!result.is_task || !result.tasks || result.tasks.length === 0) {
-      if (learnedLines.length > 0) {
-        await ctx.reply(learnedLines.join("\n"));
-      }
-      return; // 不是任务，不回应任务内容，避免打扰
-    }
-
-    const confirmLines = [...learnedLines];
-
-    for (const task of result.tasks) {
-      if (task.need_clarification) {
-        await ctx.reply(`❓ ${task.need_clarification}`);
-        continue;
-      }
-
-      const id = await addTask({
-        date: task.date,
-        time: task.time,
-        content: task.content,
-        project: task.project,
-        urgent: task.urgent,
-        hard_deadline: task.hard_deadline,
-        raw_message: userMessage,
-      });
-
-      const dateLabel = task.date ? task.date : "（未定日期）";
-      const timeLabel = task.time ? ` ${task.time}` : "";
-      const projectLabel = task.project ? `[${task.project}] ` : "";
-      const urgentLabel = task.urgent ? " 🔴急" : "";
-      confirmLines.push(`✅ ${id} ${dateLabel}${timeLabel} — ${projectLabel}${task.content}${urgentLabel}`);
-    }
-
-    if (confirmLines.length > 0) {
-      await ctx.reply(confirmLines.join("\n"));
-    }
-  } catch (err) {
-    console.error("处理消息失败:", err);
-    await ctx.reply("⚠️ 记录的时候出了点问题，稍后再试一次，或者检查一下log。");
-  }
-});
-
 // --- /list 查看待处理任务 ---
 bot.command("list", async (ctx) => {
   try {
@@ -172,6 +112,66 @@ bot.command("cancel", async (ctx) => {
   } catch (err) {
     console.error("/cancel 失败:", err);
     await ctx.reply("⚠️ 取消失败。");
+  }
+});
+
+// --- 核心：接收文字消息 → 解析 → 写入 ---
+bot.on("text", async (ctx) => {
+  const userMessage = ctx.message.text.trim();
+  if (userMessage.startsWith("/")) return; // 指令已被上面的handler处理，这里不重复处理
+
+  try {
+    const entities = await loadEntities();
+    const result = await parseMessage(userMessage, entities);
+
+    // 无论是否为任务，都先处理消息里学到的新实体
+    const learnedLines = [];
+    if (result.new_entities && result.new_entities.length > 0) {
+      for (const ent of result.new_entities) {
+        if (!ent.name || !ent.project) continue;
+        const added = await addEntity(ent.name, ent.project);
+        if (added) learnedLines.push(`🧠 已学习：${ent.name} → ${ent.project}`);
+      }
+    }
+
+    if (!result.is_task || !result.tasks || result.tasks.length === 0) {
+      if (learnedLines.length > 0) {
+        await ctx.reply(learnedLines.join("\n"));
+      }
+      return; // 不是任务，不回应任务内容，避免打扰
+    }
+
+    const confirmLines = [...learnedLines];
+
+    for (const task of result.tasks) {
+      if (task.need_clarification) {
+        await ctx.reply(`❓ ${task.need_clarification}`);
+        continue;
+      }
+
+      const id = await addTask({
+        date: task.date,
+        time: task.time,
+        content: task.content,
+        project: task.project,
+        urgent: task.urgent,
+        hard_deadline: task.hard_deadline,
+        raw_message: userMessage,
+      });
+
+      const dateLabel = task.date ? task.date : "（未定日期）";
+      const timeLabel = task.time ? ` ${task.time}` : "";
+      const projectLabel = task.project ? `[${task.project}] ` : "";
+      const urgentLabel = task.urgent ? " 🔴急" : "";
+      confirmLines.push(`✅ ${id} ${dateLabel}${timeLabel} — ${projectLabel}${task.content}${urgentLabel}`);
+    }
+
+    if (confirmLines.length > 0) {
+      await ctx.reply(confirmLines.join("\n"));
+    }
+  } catch (err) {
+    console.error("处理消息失败:", err);
+    await ctx.reply("⚠️ 记录的时候出了点问题，稍后再试一次，或者检查一下log。");
   }
 });
 
