@@ -35,7 +35,7 @@ async function getTasksSheet() {
 
   // 自动补栏位：如果表格是旧版本，缺栏位就补加在最后，不影响既有资料
   await sheet.loadHeaderRow();
-  const missing = ["标题", "备注"].filter((h) => !sheet.headerValues.includes(h));
+  const missing = ["标题", "备注", "上次提醒时间"].filter((h) => !sheet.headerValues.includes(h));
   if (missing.length > 0) {
     await sheet.setHeaderRow([...sheet.headerValues, ...missing]);
   }
@@ -205,6 +205,44 @@ async function markTaskDoneByRow(row) {
   await row.save();
 }
 
+async function getAllPendingTasks() {
+  const sheet = await getTasksSheet();
+  const rows = await sheet.getRows();
+  return rows.filter((r) => (r.get("状态") || "") === "待处理");
+}
+
+// 找出已经逾期、还没完成的硬deadline任务（用来做升级提醒）
+async function getOverdueHardDeadlineTasks() {
+  const pending = await getAllPendingTasks();
+  const now = new Date();
+
+  return pending.filter((r) => {
+    if ((r.get("类型") || "") !== "硬deadline") return false;
+    const date = r.get("日期") || "";
+    if (!date) return false;
+    const time = r.get("时间") || "23:59";
+    const deadline = new Date(`${date}T${time}:00+08:00`); // 马来西亚时区
+    return deadline.getTime() < now.getTime();
+  });
+}
+
+async function bumpReminder(row) {
+  const current = parseInt(row.get("已提醒次数") || "0", 10) || 0;
+  row.set("已提醒次数", current + 1);
+  row.set("上次提醒时间", new Date().toISOString()); // 存完整UTC时间戳，避免时区混淆
+  await row.save();
+}
+
+// 判断这个任务距离上次提醒是否已经超过间隔小时数（第一次提醒必定放行）
+function shouldRemindAgain(row, intervalHours) {
+  const last = row.get("上次提醒时间");
+  if (!last) return true;
+  const lastTime = new Date(last);
+  if (isNaN(lastTime.getTime())) return true; // 解析失败就放行，避免卡死不提醒
+  const hoursSince = (Date.now() - lastTime.getTime()) / (1000 * 60 * 60);
+  return hoursSince >= intervalHours;
+}
+
 module.exports = {
   getDoc,
   getTasksSheet,
@@ -220,4 +258,8 @@ module.exports = {
   getRowById,
   updateTaskFields,
   cancelRowsWithNote,
+  getAllPendingTasks,
+  getOverdueHardDeadlineTasks,
+  bumpReminder,
+  shouldRemindAgain,
 };

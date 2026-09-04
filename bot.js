@@ -1,5 +1,6 @@
 require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
+const cron = require("node-cron");
 const { parseMessage, parseImageMessage } = require("./claude");
 const {
   addTask,
@@ -12,6 +13,11 @@ const {
   getRowById,
   updateTaskFields,
   cancelRowsWithNote,
+  getAllPendingTasks,
+  getOverdueHardDeadlineTasks,
+  bumpReminder,
+  shouldRemindAgain,
+  loadConfig,
 } = require("./sheets");
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
@@ -40,12 +46,45 @@ function randomOpener() {
 const HELP_TEXT =
   "秘书在line上 📋\n直接跟我说要做什么事，我会记下来；说「做完了/搞定了」我也听得懂，会自动帮你打勾。截图/照片也可以直接传给我，我会看内容判断有没有任务。\n\n下面按钮可以快速操作，也可以照旧打指令：\n/list 查看待处理任务\n/done 任务ID 标记完成\n/cancel 任务ID 取消任务";
 
+// --- 清单文字组装（纯函式，供 /list、今日任务、每日提醒共用） ---
+function buildTaskListMessage(pending, title) {
+  if (pending.length === 0) return null;
+
+  const sorted = [...pending].sort((a, b) => {
+    const da = a.get("日期") || "9999-99-99";
+    const db = b.get("日期") || "9999-99-99";
+    return da.localeCompare(db);
+  });
+
+  const groups = {};
+  for (const r of sorted) {
+    const project = r.get("关联客户项目") || "其他";
+    if (!groups[project]) groups[project] = [];
+    groups[project].push(r);
+  }
+
+  let message = `<b>${title}</b> · 共${sorted.length}项\n`;
+
+  for (const [project, items] of Object.entries(groups)) {
+    message += `\n<b>📁 ${escapeHtml(project)}</b>\n`;
+    items.forEach((r, idx) => {
+      const id = r.get("任务ID");
+      const date = r.get("日期") || "未定日期";
+      const time = r.get("时间") ? ` ${r.get("时间")}` : "";
+      const taskTitle = escapeHtml(r.get("标题") || r.get("内容"));
+      const urgent = r.get("紧急标记") === "是" ? " 🔴" : "";
+      message += `${idx + 1}. ${taskTitle}${urgent}\n<i>${date}${time} · ${id}</i>\n\n`;
+    });
+  }
+
+  message += `<i>完成用 /done 任务ID，或直接点「${BTN_DONE}」</i>`;
+  return message.trim();
+}
+
 // --- /list 与 今日任务 共用的清单渲染 ---
 async function renderTaskList(ctx, { todayOnly = false } = {}) {
   try {
-    const sheet = await getTasksSheet();
-    const rows = await sheet.getRows();
-    let pending = rows.filter((r) => (r.get("状态") || "") === "待处理");
+    let pending = await getAllPendingTasks();
 
     if (todayOnly) {
       const today = new Date().toISOString().split("T")[0];
@@ -57,37 +96,8 @@ async function renderTaskList(ctx, { todayOnly = false } = {}) {
       return;
     }
 
-    pending.sort((a, b) => {
-      const da = a.get("日期") || "9999-99-99";
-      const db = b.get("日期") || "9999-99-99";
-      return da.localeCompare(db);
-    });
-
-    const groups = {};
-    for (const r of pending) {
-      const project = r.get("关联客户项目") || "其他";
-      if (!groups[project]) groups[project] = [];
-      groups[project].push(r);
-    }
-
-    const title = todayOnly ? "今日任务" : "待处理任务";
-    let message = `<b>${title}</b> · 共${pending.length}项\n`;
-
-    for (const [project, items] of Object.entries(groups)) {
-      message += `\n<b>📁 ${escapeHtml(project)}</b>\n`;
-      items.forEach((r, idx) => {
-        const id = r.get("任务ID");
-        const date = r.get("日期") || "未定日期";
-        const time = r.get("时间") ? ` ${r.get("时间")}` : "";
-        const taskTitle = escapeHtml(r.get("标题") || r.get("内容"));
-        const urgent = r.get("紧急标记") === "是" ? " 🔴" : "";
-        message += `${idx + 1}. ${taskTitle}${urgent}\n<i>${date}${time} · ${id}</i>\n\n`;
-      });
-    }
-
-    message += `<i>完成用 /done 任务ID，或直接点「${BTN_DONE}」</i>`;
-
-    await ctx.reply(message.trim(), { parse_mode: "HTML" });
+    const message = buildTaskListMessage(pending, todayOnly ? "今日任务" : "待处理任务");
+    await ctx.reply(message, { parse_mode: "HTML" });
   } catch (err) {
     console.error("清单读取失败:", err);
     await ctx.reply("⚠️ 读取任务列表失败。");
@@ -402,6 +412,62 @@ bot.on("photo", async (ctx) => {
 
 bot.launch();
 console.log("MJ秘书Bot已启动...");
+
+// --- 每天早上9点（马来西亚时区）推送待处理清单 ---
+cron.schedule(
+  "0 9 * * *",
+  async () => {
+    try {
+      const pending = await getAllPendingTasks();
+      if (pending.length === 0) {
+        await bot.telegram.sendMessage(OWNER_ID, "早安 ☀️ 今天没有待处理的任务，轻松开始新的一天");
+        return;
+      }
+      const message = buildTaskListMessage(pending, "早安，今天待处理");
+      await bot.telegram.sendMessage(OWNER_ID, `早安 ☀️\n\n${message}`, { parse_mode: "HTML" });
+      console.log("[每日提醒] 已推送");
+    } catch (err) {
+      console.error("[每日提醒] 失败:", err);
+    }
+  },
+  { timezone: "Asia/Kuala_Lumpur" }
+);
+
+// --- 每小时检查一次逾期未完成的硬deadline任务，按Config设定的间隔升级提醒 ---
+cron.schedule(
+  "0 * * * *",
+  async () => {
+    try {
+      const config = await loadConfig();
+      const intervalHours = parseFloat(config["未完成升级提醒间隔小时"]) || 4;
+
+      const overdue = await getOverdueHardDeadlineTasks();
+      const dueForReminder = overdue.filter((r) => shouldRemindAgain(r, intervalHours));
+
+      if (dueForReminder.length === 0) return;
+
+      const lines = dueForReminder.map((r) => {
+        const title = r.get("标题") || r.get("内容");
+        const id = r.get("任务ID");
+        const date = r.get("日期");
+        const time = r.get("时间") ? ` ${r.get("时间")}` : "";
+        return `⚠️ <code>${id}</code> ${escapeHtml(title)}\n<i>已逾期 · 原定 ${date}${time}</i>`;
+      });
+
+      await bot.telegram.sendMessage(OWNER_ID, `这几件事逾期还没打勾：\n\n${lines.join("\n\n")}`, {
+        parse_mode: "HTML",
+      });
+
+      for (const row of dueForReminder) {
+        await bumpReminder(row);
+      }
+      console.log(`[逾期提醒] 推送了${dueForReminder.length}项`);
+    } catch (err) {
+      console.error("[逾期提醒] 失败:", err);
+    }
+  },
+  { timezone: "Asia/Kuala_Lumpur" }
+);
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
