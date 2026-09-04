@@ -39,17 +39,35 @@ bot.command("list", async (ctx) => {
       return da.localeCompare(db);
     });
 
-    const lines = pending.map((r) => {
-      const id = r.get("任务ID");
-      const date = r.get("日期") || "未定日期";
-      const time = r.get("时间") ? ` ${r.get("时间")}` : "";
-      const project = r.get("关联客户项目") ? `[${r.get("关联客户项目")}] ` : "";
-      const content = r.get("内容");
-      const urgent = r.get("紧急标记") === "是" ? " 🔴" : "";
-      return `${id} | ${date}${time} — ${project}${content}${urgent}`;
-    });
+    // 按客户/项目分组，没有归属的放在"其他"
+    const groups = {};
+    for (const r of pending) {
+      const project = r.get("关联客户项目") || "其他";
+      if (!groups[project]) groups[project] = [];
+      groups[project].push(r);
+    }
 
-    await ctx.reply(`📋 待处理任务（共${pending.length}项）\n\n${lines.join("\n")}`);
+    const escapeHtml = (s) =>
+      String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    let message = `📋 <b>待处理任务</b>（共${pending.length}项）\n`;
+
+    for (const [project, items] of Object.entries(groups)) {
+      message += `\n<b>▸ ${escapeHtml(project)}</b>\n`;
+      for (const r of items) {
+        const id = r.get("任务ID");
+        const date = r.get("日期") || "未定日期";
+        const time = r.get("时间") ? ` ${r.get("时间")}` : "";
+        const content = escapeHtml(r.get("内容"));
+        const urgent = r.get("紧急标记") === "是" ? " 🔴" : "";
+        const typeIcon = r.get("类型") === "硬deadline" ? "🔒" : "💭";
+        message += `${typeIcon} <code>${id}</code> ${date}${time}${urgent}\n    ${content}\n`;
+      }
+    }
+
+    message += `\n<i>用 /done 任务ID 标记完成，/cancel 任务ID 取消</i>`;
+
+    await ctx.reply(message.trim(), { parse_mode: "HTML" });
   } catch (err) {
     console.error("/list 失败:", err);
     await ctx.reply("⚠️ 读取任务列表失败。");
@@ -143,6 +161,9 @@ bot.on("text", async (ctx) => {
 
     const confirmLines = [...learnedLines];
 
+    const escapeHtml = (s) =>
+      String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
     for (const task of result.tasks) {
       if (task.need_clarification) {
         await ctx.reply(`❓ ${task.need_clarification}`);
@@ -159,15 +180,18 @@ bot.on("text", async (ctx) => {
         raw_message: userMessage,
       });
 
-      const dateLabel = task.date ? task.date : "（未定日期）";
+      const dateLabel = task.date ? task.date : "未定日期";
       const timeLabel = task.time ? ` ${task.time}` : "";
-      const projectLabel = task.project ? `[${task.project}] ` : "";
+      const projectLabel = task.project ? `[${escapeHtml(task.project)}] ` : "";
       const urgentLabel = task.urgent ? " 🔴急" : "";
-      confirmLines.push(`✅ ${id} ${dateLabel}${timeLabel} — ${projectLabel}${task.content}${urgentLabel}`);
+      const typeIcon = task.hard_deadline ? "🔒" : "💭";
+      confirmLines.push(
+        `✅ <code>${id}</code> ${typeIcon} ${dateLabel}${timeLabel}${urgentLabel}\n    ${projectLabel}${escapeHtml(task.content)}`
+      );
     }
 
     if (confirmLines.length > 0) {
-      await ctx.reply(confirmLines.join("\n"));
+      await ctx.reply(confirmLines.join("\n"), { parse_mode: "HTML" });
     }
   } catch (err) {
     console.error("处理消息失败:", err);
