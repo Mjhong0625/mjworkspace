@@ -60,7 +60,10 @@ async function parseMessage(userMessage, entities) {
     messages: [{ role: "user", content: userMessage }],
   });
 
-  const text = response.content[0].text.trim();
+  let text = response.content[0].text.trim();
+
+  // 去除可能出现的markdown代码块包裹（```json ... ``` 或 ``` ... ```）
+  text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
 
   try {
     return JSON.parse(text);
