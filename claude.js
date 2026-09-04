@@ -52,6 +52,7 @@ ${entityList || "（暂无已知实体）"}
    - target_ids：提到的任务ID数组（原样抄写MJ打的格式即可，比如"0010"、"T0012"都可以，不用自己转换格式）
    - new_title / new_detail / new_date / new_time：MJ想要改成的新内容，只填有明确提到要改的栏位，没提到的留空字符串
    如果只提到一个ID，就是单纯修改那一个任务；如果提到多个ID，就是要把它们合并成一个（合并后只保留一条，其余会被取消）。如果这条消息不是在要求修改/合并现有任务，edit_action为null，这种情况下is_task也应该是false（因为这不是新增任务）。**注意：new_title/new_detail里如果出现"今天"这类字眼，那是在描述任务到期当天该做的事（书面语气），不代表要把日期改成消息发送当天——只有MJ明确说要改期、挪日期时，才填new_date，否则new_date留空，保留任务原本的日期不动。**
+14. 判断MJ是不是要**取消/删除**某个既有任务（比如"这个创建错了，取消"、"0010不用了"、"删掉那个"、"搞错了拿掉"）。如果是，把提到的任务ID放进 cancel_ids 数组（原样抄写MJ打的格式，比如"0010"），is_task应为false（这不是新增任务，也不是edit_action）。如果没有取消意图，cancel_ids是空数组[]。**判断优先级：如果同一句话里MJ同时说了某个ID是"对的/正确的"、另一个ID是"错的/取消"，要分别处理——错的那个放cancel_ids，对的那个不要动它。**
 
 只输出JSON，不要有任何其他文字、不要用markdown代码块包裹。
 
@@ -74,7 +75,8 @@ ${entityList || "（暂无已知实体）"}
   "empathy_note": "",
   "done_hint": "",
   "reply": "",
-  "edit_action": null
+  "edit_action": null,
+  "cancel_ids": []
 }
 
 如果是要求合并/修改现有任务：
@@ -91,7 +93,20 @@ ${entityList || "（暂无已知实体）"}
     "new_detail": "",
     "new_date": "",
     "new_time": ""
-  }
+  },
+  "cancel_ids": []
+}
+
+如果是要求取消某个任务：
+{
+  "is_task": false,
+  "tasks": [],
+  "new_entities": [],
+  "empathy_note": "",
+  "done_hint": "",
+  "reply": "",
+  "edit_action": null,
+  "cancel_ids": ["0010"]
 }
 
 如果都不是：
@@ -102,7 +117,8 @@ ${entityList || "（暂无已知实体）"}
   "empathy_note": "",
   "done_hint": "",
   "reply": "",
-  "edit_action": null
+  "edit_action": null,
+  "cancel_ids": []
 }`;
 }
 

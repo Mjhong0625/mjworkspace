@@ -115,6 +115,37 @@ async function tryMarkDoneByHint(ctx, hint, logTag) {
   }
 }
 
+// --- 处理"取消既有任务"的自然语言请求 ---
+async function handleCancelIds(ctx, rawIds) {
+  try {
+    const ids = rawIds.map((raw) => normalizeTaskId(raw)).filter(Boolean);
+    const uniqueIds = [...new Set(ids)];
+
+    const found = [];
+    const notFound = [];
+    for (const id of uniqueIds) {
+      const row = await getRowById(id);
+      if (row && (row.get("状态") || "") !== "取消") {
+        row.set("状态", "取消");
+        await row.save();
+        found.push(id);
+      } else if (!row) {
+        notFound.push(id);
+      }
+    }
+
+    if (found.length > 0) {
+      await ctx.reply(`— 已取消：${found.join("、")}`);
+    }
+    if (notFound.length > 0) {
+      await ctx.reply(`找不到：${notFound.join("、")}，麻烦确认一下编号`);
+    }
+  } catch (err) {
+    console.error("cancel_ids处理失败:", err);
+    await ctx.reply("⚠️ 取消任务的时候出了点问题。");
+  }
+}
+
 // --- 处理"修改/合并现有任务"的请求 ---
 async function handleEditAction(ctx, editAction) {
   try {
@@ -173,6 +204,10 @@ async function handleParsedResult(ctx, result, rawMessageForStorage) {
 
   if (result.edit_action && result.edit_action.target_ids && result.edit_action.target_ids.length > 0) {
     await handleEditAction(ctx, result.edit_action);
+  }
+
+  if (result.cancel_ids && result.cancel_ids.length > 0) {
+    await handleCancelIds(ctx, result.cancel_ids);
   }
 
   if (result.done_hint) {
