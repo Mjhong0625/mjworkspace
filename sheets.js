@@ -33,10 +33,11 @@ async function getTasksSheet() {
     "类型", "状态", "已提醒次数", "原始消息", "创建时间", "完成时间",
   ]);
 
-  // 自动补栏位：如果表格是旧版本，没有"标题"栏，补加在最后，不影响既有资料
+  // 自动补栏位：如果表格是旧版本，缺栏位就补加在最后，不影响既有资料
   await sheet.loadHeaderRow();
-  if (!sheet.headerValues.includes("标题")) {
-    await sheet.setHeaderRow([...sheet.headerValues, "标题"]);
+  const missing = ["标题", "备注"].filter((h) => !sheet.headerValues.includes(h));
+  if (missing.length > 0) {
+    await sheet.setHeaderRow([...sheet.headerValues, ...missing]);
   }
 
   return sheet;
@@ -131,17 +132,49 @@ async function addEntity(name, project) {
   return true;
 }
 
+// 从任意文字中抓出可能的任务ID（不管写"008"、"0008"、"T0008"都能辨识），找不到回传null
+function normalizeTaskId(text) {
+  if (!text) return null;
+  const match = String(text).match(/t?0*(\d{1,4})\b/i);
+  if (!match) return null;
+  return `T${match[1].padStart(4, "0")}`;
+}
+
+async function getRowById(id) {
+  const sheet = await getTasksSheet();
+  const rows = await sheet.getRows();
+  return rows.find((r) => (r.get("任务ID") || "").toUpperCase() === id.toUpperCase()) || null;
+}
+
+async function updateTaskFields(row, fields) {
+  if (fields.title) row.set("标题", fields.title);
+  if (fields.detail) row.set("内容", fields.detail);
+  if (fields.date) row.set("日期", fields.date);
+  if (fields.time !== undefined && fields.time !== null && fields.time !== "") row.set("时间", fields.time);
+  if (fields.project) row.set("关联客户项目", fields.project);
+  await row.save();
+}
+
+async function cancelRowsWithNote(rows, note) {
+  for (const row of rows) {
+    row.set("状态", "取消");
+    const existingNote = row.get("备注") || "";
+    row.set("备注", existingNote ? `${existingNote}；${note}` : note);
+    await row.save();
+  }
+}
+
 async function findPendingTasksByKeyword(keyword) {
   const sheet = await getTasksSheet();
   const rows = await sheet.getRows();
   const kw = keyword.trim().toLowerCase();
   if (!kw) return [];
 
-  // 如果关键词里直接包含任务ID（比如 T0001），优先精准匹配
-  const idMatch = kw.match(/t\d{3,}/i);
-  if (idMatch) {
+  // 先用更聪明的ID辨识，不管"008"、"0008"、"T0008"都能抓出来精准比对
+  const normalizedId = normalizeTaskId(kw);
+  if (normalizedId) {
     const exact = rows.filter(
-      (r) => (r.get("状态") || "") === "待处理" && (r.get("任务ID") || "").toLowerCase() === idMatch[0].toLowerCase()
+      (r) => (r.get("状态") || "") === "待处理" && (r.get("任务ID") || "").toUpperCase() === normalizedId
     );
     if (exact.length > 0) return exact;
   }
@@ -183,4 +216,8 @@ module.exports = {
   loadConfig,
   findPendingTasksByKeyword,
   markTaskDoneByRow,
+  normalizeTaskId,
+  getRowById,
+  updateTaskFields,
+  cancelRowsWithNote,
 };

@@ -8,6 +8,10 @@ const {
   getTasksSheet,
   findPendingTasksByKeyword,
   markTaskDoneByRow,
+  normalizeTaskId,
+  getRowById,
+  updateTaskFields,
+  cancelRowsWithNote,
 } = require("./sheets");
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
@@ -111,10 +115,64 @@ async function tryMarkDoneByHint(ctx, hint, logTag) {
   }
 }
 
+// --- 处理"修改/合并现有任务"的请求 ---
+async function handleEditAction(ctx, editAction) {
+  try {
+    const ids = editAction.target_ids.map((raw) => normalizeTaskId(raw)).filter(Boolean);
+    const uniqueIds = [...new Set(ids)];
+
+    const rows = [];
+    for (const id of uniqueIds) {
+      const row = await getRowById(id);
+      if (row) rows.push(row);
+    }
+
+    if (rows.length === 0) {
+      await ctx.reply("没找到你说的那些任务ID，麻烦确认一下编号 🤔");
+      return;
+    }
+
+    const fields = {
+      title: editAction.new_title || "",
+      detail: editAction.new_detail || "",
+      date: editAction.new_date || "",
+      time: editAction.new_time || "",
+    };
+
+    if (rows.length === 1) {
+      await updateTaskFields(rows[0], fields);
+      const id = rows[0].get("任务ID");
+      const title = rows[0].get("标题");
+      await ctx.reply(`✓ ${id} 已更新：${escapeHtml(title)}`, { parse_mode: "HTML" });
+      return;
+    }
+
+    // 多个ID：保留第一个作为存活任务，其余取消，并注记合并去向
+    const [survivor, ...rest] = rows;
+    await updateTaskFields(survivor, fields);
+    await cancelRowsWithNote(rest, `已合并入 ${survivor.get("任务ID")}`);
+
+    const survivorId = survivor.get("任务ID");
+    const survivorTitle = survivor.get("标题");
+    const mergedIds = rest.map((r) => r.get("任务ID")).join("、");
+    await ctx.reply(
+      `✓ 已合并：${mergedIds} → ${survivorId}\n<b>${escapeHtml(survivorTitle)}</b>`,
+      { parse_mode: "HTML" }
+    );
+  } catch (err) {
+    console.error("edit_action处理失败:", err);
+    await ctx.reply("⚠️ 修改任务的时候出了点问题。");
+  }
+}
+
 // --- 处理Haiku解析结果的共用逻辑（文字消息、图片消息都走这里） ---
 async function handleParsedResult(ctx, result, rawMessageForStorage) {
   if (result.empathy_note) {
     await ctx.reply(result.empathy_note);
+  }
+
+  if (result.edit_action && result.edit_action.target_ids && result.edit_action.target_ids.length > 0) {
+    await handleEditAction(ctx, result.edit_action);
   }
 
   if (result.done_hint) {

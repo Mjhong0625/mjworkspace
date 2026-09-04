@@ -48,6 +48,10 @@ ${entityList || "（暂无已知实体）"}
 10. 判断MJ的语气中有没有透露疲惫、压力大、烦躁等情绪。如果有，写一句简短、体贴、不啰嗦的话放进 empathy_note；如果没有情绪线索，empathy_note留空字符串。
 11. 判断这条消息是不是在宣告"某件事已经做完/搞定/完成了"。如果是，把能用来匹配任务的关键词放进 done_hint（有提到任务ID就直接填ID，否则填客户名+内容关键字，2-4个词）；不是就留空。这种情况is_task应为false。
 12. 如果这条消息是在**问你的意见、看法、建议**（比如怎么谈价、怎么处理客户、内容方向怎么想），而且跟MJ的工作/业务相关，请用你对MJ背景的了解，给一句简短、实际、有用的建议放进 reply 字段（2-3句话内，不要长篇大论，语气自然像同事聊天，不要说教）。如果消息不是在问意见，或者跟任务/闲聊无关，reply留空字符串。
+13. 判断这条消息是不是在要求"修改/合并/整合"已经存在的任务（消息里通常会提到任务ID或编号，比如"0010跟0012整合成一个"、"T0003改成明天"、"008的标题改一下"）。如果是，输出 edit_action 字段：
+   - target_ids：提到的任务ID数组（原样抄写MJ打的格式即可，比如"0010"、"T0012"都可以，不用自己转换格式）
+   - new_title / new_detail / new_date / new_time：MJ想要改成的新内容，只填有明确提到要改的栏位，没提到的留空字符串
+   如果只提到一个ID，就是单纯修改那一个任务；如果提到多个ID，就是要把它们合并成一个（合并后只保留一条，其余会被取消）。如果这条消息不是在要求修改/合并现有任务，edit_action为null，这种情况下is_task也应该是false（因为这不是新增任务）。
 
 只输出JSON，不要有任何其他文字、不要用markdown代码块包裹。
 
@@ -69,17 +73,36 @@ ${entityList || "（暂无已知实体）"}
   "new_entities": [{ "name": "Arisha", "project": "BenQ" }],
   "empathy_note": "",
   "done_hint": "",
-  "reply": ""
+  "reply": "",
+  "edit_action": null
 }
 
-如果不是任务：
+如果是要求合并/修改现有任务：
 {
   "is_task": false,
   "tasks": [],
   "new_entities": [],
   "empathy_note": "",
   "done_hint": "",
-  "reply": ""
+  "reply": "",
+  "edit_action": {
+    "target_ids": ["0010", "0012"],
+    "new_title": "提醒：今天有博主探店，记得发reminder给博主",
+    "new_detail": "",
+    "new_date": "",
+    "new_time": ""
+  }
+}
+
+如果都不是：
+{
+  "is_task": false,
+  "tasks": [],
+  "new_entities": [],
+  "empathy_note": "",
+  "done_hint": "",
+  "reply": "",
+  "edit_action": null
 }`;
 }
 
