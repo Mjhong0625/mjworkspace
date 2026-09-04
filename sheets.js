@@ -106,12 +106,29 @@ async function loadConfig() {
   return config;
 }
 
+async function addEntity(name, project) {
+  const sheet = await getEntitiesSheet();
+  const rows = await sheet.getRows();
+  const exists = rows.some(
+    (r) => (r.get("实体名称") || "").trim().toLowerCase() === name.trim().toLowerCase()
+  );
+  if (exists) return false;
+
+  await sheet.addRow({
+    实体名称: name.trim(),
+    归属客户项目: project.trim(),
+    "别名（用逗号分隔）": "",
+  });
+  return true;
+}
+
 module.exports = {
   getDoc,
   getTasksSheet,
   addTask,
   getEntitiesSheet,
   loadEntities,
+  addEntity,
   getConfigSheet,
   loadConfig,
 };

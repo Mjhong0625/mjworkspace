@@ -23,6 +23,7 @@ ${entityList || "（暂无已知实体）"}
 6. 判断这个任务是否为"硬deadline"（有明确的对外承诺、客户要求、明确截止时间）还是"软提醒"（自己想做、没有强制期限）。hard_deadline 为 true/false。
 7. 判断MJ的语气中是否透露出紧急感（比如说"很急"、"赶快"、"马上"、"重要"等），urgent 为 true/false。
 8. content 字段用一句简短的话总结任务内容，不要照抄原文全部。
+9. 如果消息里提到了人名（KOL、同事、联系人等），且能明确判断出这个人归属哪个客户/项目，但这个人名不在上面的已知实体库里，请把它加进 new_entities 数组，帮助系统学习（不确定归属就不要加）。就算这条消息本身不是任务（is_task为false），只要提到了新的人名归属关系，也要照样填 new_entities。
 
 只输出JSON，不要有任何其他文字、不要用markdown代码块包裹。
 
@@ -39,13 +40,26 @@ ${entityList || "（暂无已知实体）"}
       "urgent": false,
       "need_clarification": ""
     }
+  ],
+  "new_entities": [
+    { "name": "Arisha", "project": "BenQ" }
   ]
 }
 
-如果不是任务：
+如果不是任务，但有新实体：
 {
   "is_task": false,
-  "tasks": []
+  "tasks": [],
+  "new_entities": [
+    { "name": "Arisha", "project": "BenQ" }
+  ]
+}
+
+如果都没有：
+{
+  "is_task": false,
+  "tasks": [],
+  "new_entities": []
 }`;
 }
 

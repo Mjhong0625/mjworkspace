@@ -1,7 +1,7 @@
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const { parseMessage } = require("./claude");
-const { addTask, loadEntities, getTasksSheet } = require("./sheets");
+const { addTask, loadEntities, addEntity, getTasksSheet } = require("./sheets");
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 const OWNER_ID = String(process.env.OWNER_TELEGRAM_ID || "");
@@ -29,11 +29,24 @@ bot.on("text", async (ctx) => {
     const entities = await loadEntities();
     const result = await parseMessage(userMessage, entities);
 
-    if (!result.is_task || !result.tasks || result.tasks.length === 0) {
-      return; // 不是任务，不回应，避免打扰
+    // 无论是否为任务，都先处理消息里学到的新实体
+    const learnedLines = [];
+    if (result.new_entities && result.new_entities.length > 0) {
+      for (const ent of result.new_entities) {
+        if (!ent.name || !ent.project) continue;
+        const added = await addEntity(ent.name, ent.project);
+        if (added) learnedLines.push(`🧠 已学习：${ent.name} → ${ent.project}`);
+      }
     }
 
-    const confirmLines = [];
+    if (!result.is_task || !result.tasks || result.tasks.length === 0) {
+      if (learnedLines.length > 0) {
+        await ctx.reply(learnedLines.join("\n"));
+      }
+      return; // 不是任务，不回应任务内容，避免打扰
+    }
+
+    const confirmLines = [...learnedLines];
 
     for (const task of result.tasks) {
       if (task.need_clarification) {
