@@ -137,12 +137,33 @@ async function findPendingTasksByKeyword(keyword) {
   const kw = keyword.trim().toLowerCase();
   if (!kw) return [];
 
-  return rows.filter((r) => {
-    if ((r.get("状态") || "") !== "待处理") return false;
-    const haystack = `${r.get("标题") || ""} ${r.get("内容") || ""} ${r.get("关联客户项目") || ""} ${r.get("原始消息") || ""}`.toLowerCase();
-    // 关键词按空格拆分，全部命中才算匹配
-    return kw.split(/\s+/).every((part) => part && haystack.includes(part));
+  // 如果关键词里直接包含任务ID（比如 T0001），优先精准匹配
+  const idMatch = kw.match(/t\d{3,}/i);
+  if (idMatch) {
+    const exact = rows.filter(
+      (r) => (r.get("状态") || "") === "待处理" && (r.get("任务ID") || "").toLowerCase() === idMatch[0].toLowerCase()
+    );
+    if (exact.length > 0) return exact;
+  }
+
+  const parts = kw.split(/\s+/).filter(Boolean);
+  const pending = rows.filter((r) => (r.get("状态") || "") === "待处理");
+
+  const scored = pending.map((r) => {
+    const haystack = `${r.get("任务ID") || ""} ${r.get("标题") || ""} ${r.get("内容") || ""} ${r.get("关联客户项目") || ""} ${r.get("原始消息") || ""}`.toLowerCase();
+    const hits = parts.filter((part) => haystack.includes(part)).length;
+    return { row: r, hits };
   });
+
+  // 至少命中一半的关键词（无条件进位），且至少命中1个
+  const threshold = Math.max(1, Math.ceil(parts.length / 2));
+  const matched = scored.filter((s) => s.hits >= threshold);
+
+  if (matched.length === 0) return [];
+
+  // 命中数最高的排前面，只取命中数等于最高分的那些，避免太多模糊匹配
+  const maxHits = Math.max(...matched.map((s) => s.hits));
+  return matched.filter((s) => s.hits === maxHits).map((s) => s.row);
 }
 
 async function markTaskDoneByRow(row) {

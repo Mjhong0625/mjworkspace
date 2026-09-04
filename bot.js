@@ -155,6 +155,7 @@ bot.on("text", async (ctx) => {
     // 完成侦测：如果这句话是在宣告某任务已完成，尝试匹配并标记
     if (result.done_hint) {
       const matches = await findPendingTasksByKeyword(result.done_hint);
+      console.log(`[完成侦测] done_hint="${result.done_hint}" 匹配到${matches.length}项`);
 
       if (matches.length === 1) {
         await markTaskDoneByRow(matches[0]);
