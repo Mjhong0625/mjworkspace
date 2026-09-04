@@ -168,6 +168,7 @@ async function handleEditAction(ctx, editAction) {
       detail: editAction.new_detail || "",
       date: editAction.new_date || "",
       time: editAction.new_time || "",
+      project: editAction.new_project || "",
     };
 
     if (rows.length === 1) {
