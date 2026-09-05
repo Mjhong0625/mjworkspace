@@ -34,6 +34,10 @@ const mainMenu = Markup.keyboard([[BTN_LIST, BTN_DONE], [BTN_TODAY, BTN_HELP]]).
 
 // 单人使用，用内存记录"是否正在等待完成目标"的状态即可，不需要持久化
 let awaitingDoneTarget = false;
+// 上一次完成侦测如果找到多个候选，先记住，让MJ可以直接说"都完成了"一次性打勾
+let pendingDoneCandidates = null;
+
+const ALL_DONE_PATTERN = /(都|全部|三个都|两个都|全都|统统|通通).*(完成|好了|做完|搞定|解决)/;
 
 function escapeHtml(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -115,14 +119,18 @@ async function tryMarkDoneByHint(ctx, hint, logTag) {
     await markTaskDoneByRow(matches[0]);
     const title = matches[0].get("标题") || matches[0].get("内容");
     await ctx.reply(`✓ 太好了，${escapeHtml(title)} 已标记完成`, { parse_mode: "HTML" });
+    pendingDoneCandidates = null;
   } else if (matches.length > 1) {
+    pendingDoneCandidates = matches; // 记住候选，MJ接着说"都完成了"就能一次性处理
     const lines = matches
       .map((r) => `<code>${r.get("任务ID")}</code> — ${escapeHtml(r.get("标题") || r.get("内容"))}`)
       .join("\n");
-    await ctx.reply(`找到好几个可能符合的，麻烦告诉我是哪个（/done 任务ID）：\n${lines}`, {
-      parse_mode: "HTML",
-    });
+    await ctx.reply(
+      `找到好几个可能符合的，麻烦告诉我是哪个（/done 任务ID），或者直接说"都完成了"一次全部打勾：\n${lines}`,
+      { parse_mode: "HTML" }
+    );
   } else {
+    pendingDoneCandidates = null;
     await ctx.reply("没找到对应的待办，如果这件事之前没记录过，就不用管这句了 👌");
   }
 }
@@ -371,6 +379,23 @@ bot.on("text", async (ctx) => {
   const userMessage = ctx.message.text.trim();
   if (userMessage.startsWith("/")) return;
   if ([BTN_LIST, BTN_DONE, BTN_TODAY, BTN_HELP].includes(userMessage)) return;
+
+  // 如果上一轮有多个候选任务，且这句话是"都完成了"这类一次性确认，直接全部打勾
+  if (pendingDoneCandidates && pendingDoneCandidates.length > 0 && ALL_DONE_PATTERN.test(userMessage)) {
+    const candidates = pendingDoneCandidates;
+    pendingDoneCandidates = null;
+    try {
+      for (const row of candidates) {
+        await markTaskDoneByRow(row);
+      }
+      const titles = candidates.map((r) => escapeHtml(r.get("标题") || r.get("内容"))).join("、");
+      await ctx.reply(`✓ 太好了，全部标记完成：${titles}`, { parse_mode: "HTML" });
+    } catch (err) {
+      console.error("批量完成失败:", err);
+      await ctx.reply("⚠️ 批量标记的时候出了点问题。");
+    }
+    return;
+  }
 
   if (awaitingDoneTarget) {
     awaitingDoneTarget = false;
