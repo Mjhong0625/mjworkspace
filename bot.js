@@ -18,6 +18,8 @@ const {
   bumpReminder,
   shouldRemindAgain,
   loadConfig,
+  loadPersonaNotes,
+  addPersonaNote,
 } = require("./sheets");
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
@@ -209,8 +211,16 @@ async function handleEditAction(ctx, editAction) {
 
 // --- 处理Haiku解析结果的共用逻辑（文字消息、图片消息都走这里） ---
 async function handleParsedResult(ctx, result, rawMessageForStorage) {
+  if (result.persona_note) {
+    addPersonaNote(result.persona_note).catch((err) => console.error("persona_note保存失败:", err));
+  }
+
   if (result.empathy_note) {
     await ctx.reply(result.empathy_note);
+  }
+
+  if (result.reply) {
+    await ctx.reply(result.reply);
   }
 
   if (result.edit_action && result.edit_action.target_ids && result.edit_action.target_ids.length > 0) {
@@ -223,10 +233,6 @@ async function handleParsedResult(ctx, result, rawMessageForStorage) {
 
   if (result.done_hint) {
     await tryMarkDoneByHint(ctx, result.done_hint, "完成侦测");
-  }
-
-  if (result.reply) {
-    await ctx.reply(result.reply);
   }
 
   const learnedLines = [];
@@ -379,7 +385,8 @@ bot.on("text", async (ctx) => {
 
   try {
     const entities = await loadEntities();
-    const result = await parseMessage(userMessage, entities);
+    const personaNotes = await loadPersonaNotes();
+    const result = await parseMessage(userMessage, entities, personaNotes);
     await handleParsedResult(ctx, result, userMessage);
   } catch (err) {
     console.error("处理消息失败:", err);
@@ -400,7 +407,8 @@ bot.on("photo", async (ctx) => {
 
     const caption = (ctx.message.caption || "").trim();
     const entities = await loadEntities();
-    const result = await parseImageMessage(base64, "image/jpeg", caption, entities);
+    const personaNotes = await loadPersonaNotes();
+    const result = await parseImageMessage(base64, "image/jpeg", caption, entities, personaNotes);
 
     const rawMessageForStorage = caption ? `[图片] ${caption}` : "[图片消息]";
     await handleParsedResult(ctx, result, rawMessageForStorage);

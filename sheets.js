@@ -243,6 +243,35 @@ function shouldRemindAgain(row, intervalHours) {
   return hoursSince >= intervalHours;
 }
 
+// --- Persona Notes（秘书对MJ互动模式的观察笔记） ---
+async function getPersonaNotesSheet() {
+  return getSheet("Persona Notes", ["观察内容", "记录时间"]);
+}
+
+async function loadPersonaNotes(limit = 20) {
+  const sheet = await getPersonaNotesSheet();
+  const rows = await sheet.getRows();
+  // 取最新的N条，避免笔记无限累积把prompt撑爆
+  return rows
+    .slice(-limit)
+    .map((r) => r.get("观察内容"))
+    .filter(Boolean);
+}
+
+async function addPersonaNote(note) {
+  if (!note || !note.trim()) return;
+  const sheet = await getPersonaNotesSheet();
+  const rows = await sheet.getRows();
+  // 避免重复记录几乎一样的观察
+  const exists = rows.some((r) => (r.get("观察内容") || "").trim() === note.trim());
+  if (exists) return;
+
+  await sheet.addRow({
+    观察内容: note.trim(),
+    记录时间: new Date().toISOString().slice(0, 16).replace("T", " "),
+  });
+}
+
 module.exports = {
   getDoc,
   getTasksSheet,
@@ -262,4 +291,6 @@ module.exports = {
   getOverdueHardDeadlineTasks,
   bumpReminder,
   shouldRemindAgain,
+  loadPersonaNotes,
+  addPersonaNote,
 };
