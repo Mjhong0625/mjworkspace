@@ -135,6 +135,35 @@ async function tryMarkDoneByHint(ctx, hint, logTag) {
   }
 }
 
+// --- 处理"顺延既有任务"的请求（没给ID，靠关键字找） ---
+async function handleRescheduleAction(ctx, rescheduleAction) {
+  try {
+    const matches = await findPendingTasksByKeyword(rescheduleAction.hint);
+    console.log(`[顺延] hint="${rescheduleAction.hint}" 匹配到${matches.length}项`);
+
+    if (matches.length === 1) {
+      await updateTaskFields(matches[0], { date: rescheduleAction.new_date });
+      const id = matches[0].get("任务ID");
+      const title = matches[0].get("标题");
+      await ctx.reply(`✓ ${id} 已顺延到 ${rescheduleAction.new_date}：${escapeHtml(title)}`, {
+        parse_mode: "HTML",
+      });
+    } else if (matches.length > 1) {
+      const lines = matches
+        .map((r) => `<code>${r.get("任务ID")}</code> — ${escapeHtml(r.get("标题") || r.get("内容"))}`)
+        .join("\n");
+      await ctx.reply(`找到好几个可能符合的，麻烦告诉我是哪个要顺延（/done或直接说明ID）：\n${lines}`, {
+        parse_mode: "HTML",
+      });
+    } else {
+      await ctx.reply("没找到对应的既有任务，如果这件事之前没记录过，我可以帮你新增一条，跟我说一声就好");
+    }
+  } catch (err) {
+    console.error("reschedule_action处理失败:", err);
+    await ctx.reply("⚠️ 顺延任务的时候出了点问题。");
+  }
+}
+
 // --- 处理"取消既有任务"的自然语言请求 ---
 async function handleCancelIds(ctx, rawIds) {
   try {
@@ -233,6 +262,10 @@ async function handleParsedResult(ctx, result, rawMessageForStorage) {
 
   if (result.edit_action && result.edit_action.target_ids && result.edit_action.target_ids.length > 0) {
     await handleEditAction(ctx, result.edit_action);
+  }
+
+  if (result.reschedule_action && result.reschedule_action.hint) {
+    await handleRescheduleAction(ctx, result.reschedule_action);
   }
 
   if (result.cancel_ids && result.cancel_ids.length > 0) {

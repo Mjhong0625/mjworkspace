@@ -71,6 +71,7 @@ ${entityList || "（暂无已知实体）"}
 10. 判断MJ语气有没有疲惫/压力大/烦躁，若有，写一句简短体贴的话放进 empathy_note；没有就留空。
 11. 判断消息是不是宣告"某件事已经做完/搞定了"。若是，把匹配关键词（有提到ID就填ID，否则填2-4个关键字）放进 done_hint；不是就留空，这种情况is_task应为false。
 12. 判断消息是不是要求"修改/合并/整合"已存在任务，或改任务归属客户。若是，输出edit_action：{target_ids, new_title, new_detail, new_date, new_time, new_project}，没提到要改的栏位留空字符串。只提一个ID是单纯修改；多个ID是合并（只留一条，其余取消）。不是的话edit_action为null，is_task也为false。**new_title/new_detail里出现"今天"是描述任务到期当天该做的事，不代表要把日期改成消息发送当天，只有MJ明确要改期才填new_date。**
+12b. 判断消息是不是在说"某个既有的、持续性的任务（比如XX follow up）今天做了，要顺延/续到明天/改天继续追"，但**没有明确给任务ID**（只讲了客户名或事情，靠关键字才能找到是哪条）。这种情况不要创建新任务，而是输出 reschedule_action 字段：{ "hint": "MILOLO follow up", "new_date": "2026-09-08" }，hint是用来搜寻既有任务的关键字（客户名+事件关键词，2-4词），new_date是换算后的新日期。这种情况is_task应为false，edit_action为null（reschedule_action是专门给"没有ID、靠关键字找任务"的顺延场景用的，跟edit_action分开）。如果消息没有这种"顺延既有任务"的意图，reschedule_action为null。
 13. 判断消息是不是要求"取消/删除"某个已存在任务。若是，把任务ID放进cancel_ids数组；不是就是空数组[]。一句话里如果同时提到某ID是对的、某ID是错的要取消，分开处理，不要都动。
 14. **reply欄位（人声层，几乎每次都要有内容）**：用你的人设语气，针对MJ这句话本身给一句自然真人的回应——寒暄、问在不在、问你有什么功能、抱怨、随口聊天、问工作意见，都要接住，不要让MJ感觉在自言自语。只有在这句话已经完全被"记录任务确认"或"完成任务确认"涵盖、不需要额外补充时，reply才可以留空（因为那些情境已经有对应的确认讯息了，不用reply重复讲）。reply控制在1-2句话内，符合你的说话模式。
 15. **persona_note欄位（学习机制）**：如果这次对话让你观察到MJ的互动习惯、工作节奏、沟通偏好、在意的重点（不是任务内容本身，比如"MJ晚上讲话比较简短""MJ很在意BenQ的deadline"），值得记住让以后互动更贴合，就写一句简短观察放进persona_note；没有值得记的就留空。不要记录过于私人或敏感的内容，只记工作互动相关的观察。
@@ -97,6 +98,7 @@ ${entityList || "（暂无已知实体）"}
   "done_hint": "",
   "reply": "",
   "edit_action": null,
+  "reschedule_action": null,
   "cancel_ids": [],
   "persona_note": ""
 }
@@ -117,6 +119,21 @@ ${entityList || "（暂无已知实体）"}
     "new_time": "",
     "new_project": ""
   },
+  "reschedule_action": null,
+  "cancel_ids": [],
+  "persona_note": ""
+}
+
+如果是要求顺延既有任务（没给ID，靠关键字找）：
+{
+  "is_task": false,
+  "tasks": [],
+  "new_entities": [],
+  "empathy_note": "",
+  "done_hint": "",
+  "reply": "",
+  "edit_action": null,
+  "reschedule_action": { "hint": "MILOLO follow up", "new_date": "2026-09-08" },
   "cancel_ids": [],
   "persona_note": ""
 }
@@ -130,6 +147,7 @@ ${entityList || "（暂无已知实体）"}
   "done_hint": "",
   "reply": "",
   "edit_action": null,
+  "reschedule_action": null,
   "cancel_ids": ["0010"],
   "persona_note": ""
 }
@@ -143,6 +161,7 @@ ${entityList || "（暂无已知实体）"}
   "done_hint": "",
   "reply": "在的，怎么了",
   "edit_action": null,
+  "reschedule_action": null,
   "cancel_ids": [],
   "persona_note": ""
 }`;
